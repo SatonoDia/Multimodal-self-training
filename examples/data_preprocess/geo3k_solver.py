@@ -68,8 +68,8 @@ def main():
     records = []
     for idx, item in enumerate(filtered_data):
         image_path = item.get("image_path")
-        question = item.get("question", "").strip()
-        answer = item.get("answer", "").strip()
+        question = item.get("question", "")
+        answer = item.get("answer", "")
 
         if not all([image_path, question, answer]):
             print(f"Skipping incomplete sample at index {idx}")

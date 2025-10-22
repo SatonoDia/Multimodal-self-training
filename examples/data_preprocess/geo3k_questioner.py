@@ -363,6 +363,7 @@ if __name__ == "__main__":
                     "index": idx,
                     "original_problem": original_problem,
                     "original_answer": original_answer,
+                    "original_image": images,
                     "task_type": "questioner",
                     "need_solver_feedback": True,
                 },

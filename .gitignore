@@ -126,3 +126,8 @@ logs
 log
 outputs
 .history
+
+VLMEvalKit/
+swanlog/
+results/
+solver.pid

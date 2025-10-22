@@ -4,6 +4,7 @@ import os
 import time
 import random
 import requests
+import base64
 
 
 STORAGE_PATH = os.getenv("STORAGE_PATH", "/tmp")
@@ -22,6 +23,7 @@ def split_list(lst, n=1):
 os.environ["NO_PROXY"] = "0.0.0.0,127.0.0.1"
 
 def fetch(index, i):
+    """Call a local solver service to process the given file."""
     try:
         response = requests.get(f"http://127.0.0.1:{5000+index}/hello?name={i}", timeout=30)
         if response.status_code == 200:
@@ -35,16 +37,14 @@ def fetch(index, i):
         return False
 
 def generate_results(data):
-    # 使用1个solver服务评估问题难度
+
     random_name = generate_temp_filename(prefix="temp_0", suffix=".json")
     
     with open(random_name, 'w') as f:
         json.dump(data, f, indent=4)
 
-    # 调用solver服务
     fetch(0, random_name)
 
-    # 收集solver服务的评估结果
     result_file = random_name.replace('.json', '_results.json')
     with open(result_file, 'r') as f:
         final_results = json.load(f)
@@ -53,35 +53,45 @@ def generate_results(data):
     
     return final_results
 
-def compute_score(data_source, solution_str, ground_truth, extra_info=None):
-    try:
-        # 解析questioner生成的JSON格式输出
-        parsed_data = json.loads(solution_str)
-        question = parsed_data.get("question", "").strip()
-        answer = parsed_data.get("answer", "").strip()
-        
-        if not question or not answer:
-            # 格式错误惩罚
-            return -1.0
-        
-        # 构建solver评估数据
-        data = [{"question": question, "answer": answer}]
-        
-        # 获取solver反馈（不确定性分数）
-        final_results = generate_results(data)
-        
-        if len(final_results) > 0 and final_results[0]['question']:
-            # 计算R-Zero不确定性奖励
-            solver_score = final_results[0]["score"]
-            uncertainty_reward = min(solver_score, 1 - solver_score)
-            return uncertainty_reward
+def compute_score(data_source, solution_strs, ground_truths, extra_infos):
+    if extra_infos is None:
+        extra_infos = [None] * len(solution_strs)
+    # Ensure all input lists have the same length
+    n = len(solution_strs)
+    assert len(extra_infos) == n, "input_images length mismatch"
+
+    valid_data = []
+    valid_indices = []
+    scores = [-1.0] * n  # Default score for all items; will update valid ones
+
+    for i, sol_str in enumerate(solution_strs):
+        try:
+            parsed = json.loads(sol_str)
+            question = parsed.get("question", "").strip()
+            answer = parsed.get("answer", "").strip()
+            image = extra_infos[i].get("original_image", None) if extra_infos[i] else None
+            base64_str = base64.b64encode(image[0]["bytes"]).decode('ascii')
+            if question and answer and image:
+                valid_data.append({"question": question, "answer": answer, "image": base64_str})
+                valid_indices.append(i)
+            else:
+                # Missing question or answer or image → invalid
+                scores[i] = -1.0
+        except (json.JSONDecodeError, TypeError):
+            # Invalid JSON or non-string input
+            scores[i] = -1.0
+    results = generate_results(valid_data)
+
+    if len(results) != len(valid_data):
+        print(f"[compute_score] Warning: expected {len(valid_data)} results, got {len(results)}")
+        # Pad or truncate to match
+        results = (results + [{"question": "", "score": 0.0}] * len(valid_data))[:len(valid_data)]
+
+    for idx, result in zip(valid_indices, results):
+        if result.get("question") and "score" in result:
+            solver_score = float(result["score"])
+            # Uncertainty reward: higher when solver is uncertain (score near 0.5)
+            scores[idx] = min(solver_score, 1.0 - solver_score)
         else:
-            # 格式错误惩罚
-            return -1.0
-            
-    except json.JSONDecodeError:
-        # JSON解析失败，格式错误惩罚
-        return -1.0
-    except Exception as e:
-        print(f"Error in compute_score: {str(e)}")
-        return -1.0
+            scores[idx] = -1.0
+    return scores

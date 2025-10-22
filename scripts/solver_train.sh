@@ -39,7 +39,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.use_fused_kernels=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=8 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.01 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
@@ -47,7 +47,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=4\
     actor_rollout_ref.rollout.name=vllm \
     +actor_rollout_ref.rollout.engine_kwargs.vllm.disable_mm_preprocessor_cache=True \
@@ -56,12 +56,12 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.free_cache_engine=True \
     actor_rollout_ref.rollout.n=4 \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \
     algorithm.use_kl_in_reward=False \
     trainer.critic_warmup=0 \
     trainer.logger='["swanlab"]' \
-    trainer.project_name='self_train_geo3k' \
+    trainer.project_name='geo3k_self_train' \
     trainer.experiment_name=${experiment_name} \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
@@ -70,7 +70,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.total_epochs=1 
 
 echo 'merging model'
-PROJECT_NAME='self_train_geo3k'
+PROJECT_NAME='geo3k_self_train'
 CHECKPOINT_DIR="checkpoints/${PROJECT_NAME}/${experiment_name}"
 
 LATEST_STEP=$(ls -1 $CHECKPOINT_DIR | grep "global_step_" | sort -V | tail -1)
@@ -82,7 +82,8 @@ if [ -n "$LATEST_STEP" ]; then
         --backend fsdp \
         --local_dir ${CHECKPOINT_DIR}/${LATEST_STEP}/actor \
         --target_dir ${CHECKPOINT_DIR}/${LATEST_STEP}/actor/huggingface
-    
+    mkdir ../models/${experiment_name}
+    cp -rL ${CHECKPOINT_DIR}/${LATEST_STEP}/actor/huggingface/* ../models/${experiment_name}
     echo "Model merged successfully: ${CHECKPOINT_DIR}/${LATEST_STEP}/actor/huggingface"
 else
     echo "Warning: No checkpoint found in $CHECKPOINT_DIR"

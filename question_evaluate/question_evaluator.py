@@ -8,6 +8,7 @@ from tqdm import tqdm
 import copy
 from collections import Counter
 import re
+from pathlib import Path
 
 Image.LOAD_TRUNCATED_IMAGES = True
 Image.MAX_IMAGE_PIXELS = None
@@ -178,7 +179,9 @@ if __name__ == "__main__":
             
         # Save results
         print(f"Saving {len(data_res)} generated answer to {args.output_file_path}")
-        with open(args.output_file_path, 'w', encoding='utf-8') as f:
+        output_path = Path(args.output_file_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, 'w', encoding='utf-8') as f:
             f.write(json.dumps(data_res, ensure_ascii=False, indent=4)) 
         
     except Exception as e:

@@ -45,6 +45,9 @@ class BatchRewardManager(AbstractRewardManager):
         self.reward_kwargs = reward_kwargs
 
     def verify(self, data):
+        n = len(data)
+        if self.num_examine > 0:
+            return [-1.0] * n
         prompt_ids = data.batch["prompts"]
         response_ids = data.batch["responses"]
         attention_mask = data.batch["attention_mask"]
@@ -62,6 +65,7 @@ class BatchRewardManager(AbstractRewardManager):
         ground_truths = [item.non_tensor_batch["reward_model"].get("ground_truth", None) for item in data]
         data_sources = data.non_tensor_batch[self.reward_fn_key]
         rollout_reward_scores = data.non_tensor_batch.get("reward_scores", [{} for _ in range(len(data))])
+        #images = [item.non_tensor_batch["extra_info"].get("original_image", None) for item in data]
         extras = data.non_tensor_batch.get("extra_info", [{} for _ in range(len(data))])
 
         for i in range(len(data)):
