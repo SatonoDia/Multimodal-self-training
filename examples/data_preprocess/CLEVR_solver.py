@@ -27,9 +27,9 @@ def image_to_bytes(image):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--json_path", required=True, help="Path to input JSON file.")
-    parser.add_argument("--local_save_dir", default="data/geo3k/data_solver_train", help="Local directory to save parquet files.")
+    parser.add_argument("--local_save_dir", default="data/clevr/data_solver_train", help="Local directory to save parquet files.")
     args = parser.parse_args()
-    data_source = "hiyouga/geometry3k"
+    data_source = "dddraxxx/spatial_clevr_numbered_2000"
     dataset = datasets.load_dataset(data_source)
     # Resolve paths
     local_save_dir = os.path.expanduser(args.local_save_dir)
@@ -42,9 +42,9 @@ def main():
     # Filter by score
     filtered_data = [
         item for item in data_list
-        if "score" in item and isinstance(item["score"], (int, float)) and 0.3 <= item["score"] <= 0.8
+        if "score" in item and isinstance(item["score"], (int, float)) and 0.3 <= item["score"] <= 0.7
     ]
-    print(f"Loaded {len(data_list)} samples, kept {len(filtered_data)} with 0.3 <= score <= 0.8.")
+    print(f"Loaded {len(data_list)} samples, kept {len(filtered_data)} with 0.3 <= score <= 0.7.")
 
     # Load images and prepare records
     records = []
@@ -58,7 +58,7 @@ def main():
             continue
 
         dataset_item = dataset["train"][image_idx]
-        image = dataset_item["images"][0]
+        image = dataset_item["image"]
         image_bytes = image_to_bytes(image)
         records.append({
             "image_bytes": image_bytes,

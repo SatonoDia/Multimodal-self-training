@@ -1,6 +1,6 @@
 """
-Preprocess the Geometry3k dataset for questioner training
-This script converts geo3k data to parquet format for training a questioner to generate
+Preprocess dataset for questioner training
+This script converts data to parquet format for training a questioner to generate
 geometry questions from images.
 """
 
@@ -15,13 +15,13 @@ if __name__ == "__main__":
     parser.add_argument("--hdfs_dir", default=None)
     parser.add_argument("--local_dataset_path", default=None, help="The local path to the raw dataset, if it exists.")
     parser.add_argument(
-        "--local_save_dir", default="data/geo3k/data_questioner_train", help="The save directory for the preprocessed dataset."
+        "--local_save_dir", default="data/geo/data_questioner_train", help="The save directory for the preprocessed dataset."
     )
 
     args = parser.parse_args()
     local_dataset_path = args.local_dataset_path
 
-    data_source = "hiyouga/geometry3k"
+    data_source = "zjuwh/self_train_set"
 
     if local_dataset_path is not None:
         dataset = datasets.load_dataset(
@@ -35,12 +35,12 @@ if __name__ == "__main__":
     train_dataset = dataset["train"]
     test_dataset = dataset["test"]
 
-    questioner_instruction = """<image>\nCreate an AMC 12 level multiple-choice geometry question based on the image. Let's think step by step.
-        First, you must fully perceive the image, extracting any valuable visual information from it (including the sizes of labeled angles, lengths of line segments, and various positional relationships), 
-        and generate a detailed visual description of the image.
+    questioner_instruction = """<image>\nCreate a multiple-choice geometry question based on the image. Let's think step by step.
+        First, you must fully perceive the image, extracting any valuable visual information from it and generate a detailed visual description of the image.
 
-        Then, write a mathematically rigorous multiple-choice question that includes ALL necessary conditions. Use phrases like "Given that..." or "If..." to state condition shown in visual description.
-        The question must include four options, one of which is the correct answer. Any question type other than multiple-choice is FORBIDDEN. 
+        Then, write a multiple-choice question that includes necessary conditions.
+        The question must include four options, one of which is the correct answer. Provide the correct answer to the generated question. It must be one of A/B/C/D, and MUST BE enclosed within <answer> </answer> tags.
+        Any question type other than multiple-choice is FORBIDDEN. 
 
         Your MUST response in this format:
 
@@ -53,12 +53,8 @@ if __name__ == "__main__":
         </question>
 
         <answer>
-        [Give the correct answer, only the answer option(A B C D)]
+        [Correct answer A/B/C/D] 
         </answer>
-
-        <confidence>
-        [A float number between 0 and 1 indicating your confidence in the correctness of the description and question]
-        </confidence>
 
         DO NOT output anything else—no explanations, no extra markup.
     """

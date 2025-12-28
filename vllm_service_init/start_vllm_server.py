@@ -9,6 +9,7 @@ from io import BytesIO
 from flask import Flask, request, jsonify
 import vllm
 from PIL import Image
+from mathruler.grader import extract_boxed_content, grade_answer
 
 Image.LOAD_TRUNCATED_IMAGES = True
 Image.MAX_IMAGE_PIXELS = None
@@ -17,7 +18,7 @@ from transformers import AutoTokenizer
 parser = argparse.ArgumentParser()
 parser.add_argument('--port', type=str, default='5000')
 parser.add_argument('--model_path', type=str, default='Qwen/Qwen2.5-VL-7B-Instruct')
-parser.add_argument('--gpu_mem_util', type=float, default=0.8)
+parser.add_argument('--gpu_mem_util', type=float, default=0.9)
 parser.add_argument('--tensor_parallel_size', type=int, default=1)
 args = parser.parse_args()
 
@@ -33,7 +34,7 @@ model = vllm.LLM(
 )
 
 sample_params = vllm.SamplingParams(
-    max_tokens=4096,
+    max_tokens=2048,
     temperature=1.0,
     top_p=1.0,
     top_k=40,
@@ -43,17 +44,19 @@ sample_params = vllm.SamplingParams(
 
 SOLVER_SYSTEM_PROMPT = "You are an expert competition-math problem solver."
 
-ANSWER_INSTRUCTION = (
-    "Solve the multiple-choice question using the provided information. "
-    "Return only the final choice in this format:\n"
-    "<answer>[A/B/C/D]</answer>\n"
-    "Do not include explanations or extra text outside the answer tags."
-)
+ANSWER_INSTRUCTION = r"""
+    Solve the multiple-choice question based on the provided image. Let's think step by step.
+    First, you must fully perceive the image, extracting any valuable visual information from it.
+    Then, solve the question, give the correct choice option.
+
+    The reasoning process MUST BE enclosed within <think> </think> tags.
+    The final answer MUST BE single option A/B/C/D put in \boxed{}.
+    """
 
 
 def load_image_from_payload(payload):
     """
-    将 caller 传来的图像载荷还原为 PIL Image。
+    Load a PIL Image from various possible payload types:
     """
     if payload is None:
         return None
@@ -99,36 +102,18 @@ def run_with_timeout(func, timeout_sec: int, *args, **kwargs):
         raise error_holder['error']
     return result_holder.get('value')
 
-def _fallback_extract_choice(text: str) -> str:
-    choices = re.findall(r'\b[ABCD]\b', text)
-    if choices:
-        return choices[-1]
 
-    patterns = [
-        r'answer is\s*([ABCD])',
-        r'choose\s*([ABCD])',
-        r'option\s*([ABCD])',
-        r'select\s*([ABCD])',
-    ]
-
-    for pattern in patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        if matches:
-            return matches[-1].upper()
-
-    return ""
-
-
-def extract_answer_choice(text: str) -> str:
+def extract_conf(text: str) -> int:
     stripped = text.strip()
-    match = re.search(r"<answer>(.*?)</answer>", stripped, re.IGNORECASE | re.DOTALL)
+    match = re.search(r"<confidence>(.*?)</confidence>", stripped, re.IGNORECASE | re.DOTALL)
     if match:
-        candidate = match.group(1)
-        for ch in reversed(candidate):
-            if ch.isalpha() and ch.isupper():
-                return ch
-
-    return _fallback_extract_choice(stripped)
+        candidate = match.group(1).strip()
+        if candidate == '0':
+            return 0
+        elif candidate == '1':
+            return 1
+    # fallback: tag missing, not '0'/'1', or invalid → return 1
+    return 1
 
 
 app = Flask(__name__)
@@ -202,7 +187,17 @@ def hello():
     print('[server] generation completed.')
 
     def process_single(question, golden_answer, response):
-        results = [extract_answer_choice(out.text) for out in response.outputs]
+        # for out in response.outputs:
+        #     conf = extract_conf(out.text)
+        #     if conf == 0:
+        #         print('[server] detected unsolvable or incorrect question.')
+        #         return {
+        #             'question': question,
+        #             'answer': '',
+        #             'score': 0.0,
+        #             'results': []
+        #         }
+        results = [extract_boxed_content(out.text) for out in response.outputs]
 
         answer_counts = {}
         for res in results:
@@ -221,11 +216,17 @@ def hello():
         max_count = max(answer_counts.values()) if answer_counts else 0
         majority_ans = max(answer_counts, key=answer_counts.get) if answer_counts else ''
         score = max_count / len(results) if results else 0.0
+        if golden_answer == '':
+            score = -1
+        elif grade_answer(majority_ans, golden_answer):
+            score = min(score, 1-score)
+        else:
+            score = 0.5 * score
 
         return {
             'question': question,
             'answer': majority_ans,
-            'score': score if majority_ans == golden_answer and score > 0.1 else 0,
+            'score': score,
             'results': results
         }
 

@@ -19,8 +19,16 @@ import argparse
 import os
 
 import datasets
+from PIL import Image
+from io import BytesIO
 
-from verl.utils.hdfs_io import copy, makedirs
+def image_to_bytes(image):
+    """Convert PIL Image to PNG bytes."""
+    if not isinstance(image, Image.Image):
+        raise ValueError("Input must be a PIL Image")
+    byte_io = BytesIO()
+    image.convert("RGB").save(byte_io, format="PNG")
+    return byte_io.getvalue()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -28,13 +36,13 @@ if __name__ == "__main__":
     parser.add_argument("--hdfs_dir", default=None)
     parser.add_argument("--local_dataset_path", default=None, help="The local path to the raw dataset, if it exists.")
     parser.add_argument(
-        "--local_save_dir", default="~/autodl-tmp/data/geo3k", help="The save directory for the preprocessed dataset."
+        "--local_save_dir", default="data/MathVista", help="The save directory for the preprocessed dataset."
     )
 
     args = parser.parse_args()
     local_dataset_path = args.local_dataset_path
 
-    data_source = "hiyouga/geometry3k"
+    data_source = "AI4Math/MathVista"
 
     if local_dataset_path is not None:
         dataset = datasets.load_dataset(
@@ -45,32 +53,32 @@ if __name__ == "__main__":
             data_source,
         )
 
-    train_dataset = dataset["train"]
-    test_dataset = dataset["test"]
+    test_dataset = dataset["testmini"]
 
     instruction_following = (
         r"You FIRST think about the reasoning process as an internal monologue and then provide the final answer. "
         r"The reasoning process MUST BE enclosed within <think> </think> tags. "
-        r"The final answer MUST BE put in \boxed{}."
+        r"The final answer MUST BE put in \boxed{}. If the question is multiple-choice, provide the content of the selected option instead of A/B/C/D."
     )
 
     # add a row to each data item that represents a unique id
     def make_map_fn(split):
         def process_fn(example, idx):
-            problem = example.pop("problem")
-            prompt = problem + " " + instruction_following
+            problem = example.pop("query")
+            prompt = "<image>" + problem + "\n" + instruction_following
             answer = example.pop("answer")
-            images = example.pop("images")
+            image = example.pop("decoded_image")
+            image_bytes = image_to_bytes(image)
 
             data = {
-                "data_source": data_source,
+                "data_source": "hiyouga/geometry3k",
                 "prompt": [
                     {
                         "role": "user",
                         "content": prompt,
                     }
                 ],
-                "images": images,
+                "images": [image_bytes],
                 "ability": "math",
                 "reward_model": {"style": "rule", "ground_truth": answer},
                 "extra_info": {
@@ -84,9 +92,9 @@ if __name__ == "__main__":
 
         return process_fn
 
-    train_dataset = train_dataset.map(function=make_map_fn("train"), with_indices=True, num_proc=8)
     test_dataset = test_dataset.map(function=make_map_fn("test"), with_indices=True, num_proc=8)
-
+    from datasets import Sequence, Image
+    test_dataset = test_dataset.cast_column("images", Sequence(Image()))
     hdfs_dir = args.hdfs_dir
     local_save_dir = args.local_dir
     if local_save_dir is not None:
@@ -94,9 +102,4 @@ if __name__ == "__main__":
     else:
         local_save_dir = args.local_save_dir
 
-    train_dataset.to_parquet(os.path.join(local_save_dir, "train.parquet"))
     test_dataset.to_parquet(os.path.join(local_save_dir, "test.parquet"))
-
-    if hdfs_dir is not None:
-        makedirs(hdfs_dir)
-        copy(src=local_save_dir, dst=hdfs_dir)

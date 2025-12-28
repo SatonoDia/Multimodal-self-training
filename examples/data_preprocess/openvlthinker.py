@@ -20,21 +20,19 @@ import os
 
 import datasets
 
-from verl.utils.hdfs_io import copy, makedirs
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--local_dir", default=None)
     parser.add_argument("--hdfs_dir", default=None)
     parser.add_argument("--local_dataset_path", default=None, help="The local path to the raw dataset, if it exists.")
     parser.add_argument(
-        "--local_save_dir", default="~/autodl-tmp/data/geo3k", help="The save directory for the preprocessed dataset."
+        "--local_save_dir", default="data/OpenVLThinker", help="The save directory for the preprocessed dataset."
     )
 
     args = parser.parse_args()
     local_dataset_path = args.local_dataset_path
 
-    data_source = "hiyouga/geometry3k"
+    data_source = "ydeng9/OpenVLThinker-grpo-hard"
 
     if local_dataset_path is not None:
         dataset = datasets.load_dataset(
@@ -63,7 +61,7 @@ if __name__ == "__main__":
             images = example.pop("images")
 
             data = {
-                "data_source": data_source,
+                "data_source": "hiyouga/geometry3k",
                 "prompt": [
                     {
                         "role": "user",
@@ -96,7 +94,3 @@ if __name__ == "__main__":
 
     train_dataset.to_parquet(os.path.join(local_save_dir, "train.parquet"))
     test_dataset.to_parquet(os.path.join(local_save_dir, "test.parquet"))
-
-    if hdfs_dir is not None:
-        makedirs(hdfs_dir)
-        copy(src=local_save_dir, dst=hdfs_dir)

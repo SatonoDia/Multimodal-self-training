@@ -132,3 +132,5 @@ swanlog/
 results/
 solver.pid
 tests/
+data/
+*.json

@@ -19,20 +19,17 @@ Image.MAX_IMAGE_PIXELS = None
 parser = argparse.ArgumentParser(
     description='Evaluate questions for images using LLM')
 parser.add_argument('--model_path',
-                    default='/C20545/models/Qwen2.5-VL-7B-Instruct',
+                    default='/root/autodl-tmp/models/Qwen2.5-VL-7B-Instruct',
                     help='Path to model')
 parser.add_argument('--data_source',
-                    default='hiyouga/geometry3k', 
+                    default='zjuwh/self_train_set', 
                     help='data source')
 parser.add_argument('--input_file',
                     default=None,
                     help='Path to the image folder')
-parser.add_argument('--question_file',
-                    default='/C20545/self_train_verl/geo3k_questions.json',
-                    help='Path to the question file')
 parser.add_argument('--output_file_path',
                     help='save path of answers',
-                    default='/root/autodl-tmp/self_train_verl/results/example/full_answers.json')
+                    default='/root/autodl-tmp/self_train_verl/filter.json')
 
 def load_image_from_dataset_item(image_field):
     """
@@ -52,32 +49,13 @@ def load_image_from_dataset_item(image_field):
     else:
         raise ValueError(f"Unsupported image field type: {type(image_field)}")
     
-def extract_answer(output_text):
-    text = output_text.strip()
-    # Try strict tag first
-    answer_match = re.search(r'<answer>\s*([A-D])\s*</answer>', text, re.IGNORECASE)
-    if answer_match:
-        return answer_match.group(1).upper()
-    
-    # Fallback: search for standalone A/B/C/D in last few lines
-    lines = text.splitlines()
-    for line in reversed(lines[-5:]):  # check last 5 lines
-        line = line.strip()
-        if re.fullmatch(r'[A-D]', line, re.IGNORECASE):
-            return line.upper()
-        # e.g., "Answer: A", "The answer is B."
-        m = re.search(r'\b([A-D])\b', line, re.IGNORECASE)
-        if m:
-            return m.group(1).upper()
-    
-    return ""  # fallback
 
 def find_voting_answer(answer_group):
     """
     Find quasi-GroundTruth using max voting
     """
     if not answer_group:
-        return 0, ""
+        return None
     m = len(answer_group)
     counter = Counter(answer_group)    
     max_count = max(counter.values())
@@ -86,38 +64,32 @@ def find_voting_answer(answer_group):
             return max_count, str
     return max_count, ""
 
+def calculate_accuracy(results, gt):
+    correct = 0
+    total = len(results)
+    for res in results:
+        if grade_answer(res, gt):
+            correct += 1
+    return correct / total if total > 0 else 0.0
 
-def question_evaluate(data_source, dataset, question_file, llm, sampling_params, tokenizer):
+def question_evaluate(data_source, dataset,  llm, sampling_params, tokenizer):
     inputs = []
     final_results = []
     valid_data = []
     # Read questions from the json file
-    with open(question_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)
     
     system_prompt = """You are an expert competition-math problem solver."""
 
-    answer_prompt = r"""
-        Solve the multiple-choice question based on the provided image. Let's think step by step.
-        First, you must fully perceive the image, extracting any valuable visual information from it.
-        Then, solve the question, give the correct choice option.
+    answer_prompt = (
+        r"You FIRST think about the reasoning process as an internal monologue and then provide the final answer. "
+        r"The reasoning process MUST BE enclosed within <think> </think> tags. "
+        r"The final answer MUST BE put in \boxed{}."
+    )
 
-        The reasoning process MUST BE enclosed within <think> </think> tags.
-        The final answer MUST BE option A/B/C/D enclosed within <answer> </answer> tags.
-        For example, if the answer is option A, you should output <answer>A</answer>.
-        """
-
-    for index, item in enumerate(tqdm(data, desc="Generating Answers")):
-        question = item["question"]
+    for index, item in enumerate(dataset):
+        question = item["problem"]
         ground_truth = item["answer"]
-        image_idx = item["image_idx"]
-        if not question or not ground_truth:
-            continue
-        dataset_item = dataset[image_idx]
-        if data_source == 'ydeng9/OpenVLThinker-grpo-hard' or data_source == 'zjuwh/self_train_set':
-            raw_image = dataset_item['images'][0]
-        else:
-            raw_image = dataset_item['image']
+        raw_image = item["images"][0]
         image = load_image_from_dataset_item(raw_image)
         if image.mode != "RGB":
             image = image.convert("RGB")
@@ -144,14 +116,16 @@ def question_evaluate(data_source, dataset, question_file, llm, sampling_params,
         })
 
         valid_data.append({
-            "img_data_source": item["img_data_source"],
-            "image_idx": item["image_idx"], 
+            "img_data_source": data_source,
+            "image_idx": index, 
             "question": question,
-            "answer": ground_truth        
+            "gt": ground_truth        
         })
             
 
     print(f"Generating answers for {len(inputs)} images...")
+    
+    # CHUNK_SIZE logic added here
     CHUNK_SIZE = 2000  # Process in chunks of 2000 to avoid memory issues
     all_outputs = []
     
@@ -163,19 +137,19 @@ def question_evaluate(data_source, dataset, question_file, llm, sampling_params,
         print(f"Chunk {i//CHUNK_SIZE + 1} processed successfully.")
     
     outputs = all_outputs
+    # End of CHUNK_SIZE logic
+    
     for index, item in enumerate(valid_data):
-        results = [extract_answer(output.text) for output in outputs[index].outputs]
-        results = [res for res in results if res in ["A", "B", "C", "D"]]
-        if not results:
-            continue
-        score, answer = find_voting_answer(results)
-        score = score / 10
+        results = [extract_boxed_content(output.text) for output in outputs[index].outputs]
+        results = [res for res in results if res]
+        acc = calculate_accuracy(results, item["gt"])
         final_results.append({
-            "img_data_source": item["img_data_source"],
+            "img_data_source": data_source,
             "image_idx": item["image_idx"], 
             "question": item["question"],
-            "answer": answer,
-            "score": score
+            "gt": item["gt"],
+            "acc": acc,
+            "outputs": results
         })
     return final_results
 
@@ -184,7 +158,7 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)   
     sampling_params = SamplingParams(
         temperature=1.0,
-        top_p=0.9,
+        top_p=0.95,
         repetition_penalty=1.1,
         max_tokens=2048,
         stop_token_ids=[tokenizer.eos_token_id],
@@ -213,16 +187,21 @@ if __name__ == "__main__":
             args.data_source,
         )
     # Process images and generate questions
+    try:
 
-    data_res = question_evaluate(args.data_source, dataset['train'], args.question_file, llm, sampling_params, tokenizer)
-    
-    if not data_res:
-        print("No answer were generated!")
-        exit(1)
+        data_res = question_evaluate(args.data_source, dataset['train'], llm, sampling_params, tokenizer)
         
-    # Save results
-    print(f"Saving {len(data_res)} generated answer to {args.output_file_path}")
-    output_path = Path(args.output_file_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(json.dumps(data_res, ensure_ascii=False, indent=4)) 
+        if not data_res:
+            print("No answer were generated!")
+            exit(1)
+            
+        # Save results
+        print(f"Saving {len(data_res)} generated answer to {args.output_file_path}")
+        output_path = Path(args.output_file_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(data_res, ensure_ascii=False, indent=4)) 
+        
+    except Exception as e:
+        print(f"Error during processing: {str(e)}")
+        exit(1)

@@ -10,12 +10,12 @@ from reward_fuction.caller import compute_score
 with open('../data/geo3k/images/0.png', 'rb') as f:
     bytes_data = f.read()  # 直接读取原始字节流
 
-test_image = [bytes_data]
+data_sources = ["hiyouga/geometry3k"]
 test_solution_str = [{"question": "What is 2+2? A) 3 B) 4 C) 5 D) 6", "answer": "B"}]
 test_ground_truth = ['B']
 
 try:
-    result = compute_score(test_image, test_solution_str, test_ground_truth)
+    result = compute_score(data_sources, test_solution_str, test_ground_truth, None)
     print(f"Output result: {result}")
     print(f"Result type: {type(result)}")
     if isinstance(result, list):

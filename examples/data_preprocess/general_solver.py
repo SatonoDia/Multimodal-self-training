@@ -1,7 +1,7 @@
 """
 Preprocess a custom JSON dataset (with image_path, question, answer, score)
 into verl-compatible parquet format.
-Only samples with 0.3 <= score <= 0.7 are kept.
+Only samples with 0.3 <= score <= 0.8 are kept.
 """
 
 import argparse
@@ -22,15 +22,52 @@ def image_to_bytes(image):
     byte_io = BytesIO()
     image.convert("RGB").save(byte_io, format="PNG")
     return byte_io.getvalue()
+# def image_to_bytes(image):
+#     """
+#     Convert a PIL Image to compressed JPEG bytes (RGB mode only).
+#     Transparent (RGBA/LA) images are composited onto a white background.
+#     This ensures compatibility and reduces storage size for RL training.
+#     """
+#     if not isinstance(image, Image.Image):
+#         raise ValueError(f"Input must be a PIL Image, got {type(image)}")
+    
+#     # Key fix 1: Explicitly convert to RGB, handling transparency correctly
+#     if image.mode in ("RGBA", "LA", "P"):
+#         # Create a white background (standard for math diagrams with transparency)
+#         background = Image.new("RGB", image.size, (255, 255, 255))
+#         # Convert 'P' (palette) mode to RGBA first for proper alpha handling
+#         if image.mode == "P":
+#             image = image.convert("RGBA")
+#         # Paste the image onto the white background using alpha channel as mask
+#         if image.mode == "RGBA":
+#             background.paste(image, mask=image.split()[-1])  # Use alpha channel as mask
+#         else:
+#             background.paste(image)
+#         image = background
+#     elif image.mode != "RGB":
+#         # Convert other modes (e.g., L, CMYK) directly to RGB
+#         image = image.convert("RGB")
+    
+#     byte_io = BytesIO()
+#     image.save(byte_io, format="JPEG", quality=95, optimize=True)
+#     return byte_io.getvalue()
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--json_path", required=True, help="Path to input JSON file.")
-    parser.add_argument("--local_save_dir", default="data/geo3k/data_solver_train", help="Local directory to save parquet files.")
+    parser.add_argument("--local_dataset_path", default=None, help="Local dataset directory.")
+    parser.add_argument("--local_save_dir", default="data/geo/data_solver_train", help="Local directory to save parquet files.")
     args = parser.parse_args()
-    data_source = "hiyouga/geometry3k"
-    dataset = datasets.load_dataset(data_source)
+    data_source = "zjuwh/self_train_set"
+    if args.local_dataset_path is not None:
+        dataset = datasets.load_dataset(
+            args.local_dataset_path,
+        )
+    else:
+        dataset = datasets.load_dataset(
+            data_source,
+        )
     # Resolve paths
     local_save_dir = os.path.expanduser(args.local_save_dir)
     os.makedirs(local_save_dir, exist_ok=True)
@@ -56,6 +93,9 @@ def main():
         if not all([question, answer]):
             print(f"Skipping incomplete sample at index {idx}")
             continue
+        if answer == "None":
+            print(f"Skipping sample with 'None' answer at index {idx}")
+            continue
 
         dataset_item = dataset["train"][image_idx]
         image = dataset_item["images"][0]
@@ -79,12 +119,12 @@ def main():
     instruction_following = (
         r"You FIRST think about the reasoning process as an internal monologue and then provide the final answer. "
         r"The reasoning process MUST BE enclosed within <think> </think> tags. "
-        r"The final answer MUST BE single option put in \boxed{}."
+        r"The final answer MUST BE single option A/B/C/D put in \boxed{}."
     )
 
     def process_fn(example, idx):
         problem = example["question"]
-        prompt = "<image>" + problem + " " + instruction_following
+        prompt = "<image>" + problem + "\n" + instruction_following
         answer = example["answer"]
         image_bytes = example["image_bytes"]
 

@@ -1,3 +1,4 @@
+#!/bin/bash
 set -x
 
 solver_model_path=$1
@@ -6,7 +7,10 @@ experiment_name=$3
 
 echo "Starting questioner training with solver: $solver_model_path, questioner: $questioner_model_path, save to: $experiment_name"
 
-bash scripts/start_solver_services.sh $solver_model_path
+bash scripts/start_solver_services.sh $solver_model_path &
+SOLVER_PID=$!
+
+trap "echo 'Shutting down solver services...'; kill $SOLVER_PID; sleep 2; echo 'Cleanup completed.'" EXIT
 
 echo "Solver services ready. Starting questioner training..."
 
@@ -14,9 +18,9 @@ export SOLVER_MODEL_NAME=$experiment_name
 
 CUDA_VISIBLE_DEVICES=1,2,3 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
-    data.train_files=data/geo3k/data_questioner_train/train.parquet \
-    data.val_files=data/geo3k/data_questioner_train/test.parquet \
-    data.train_batch_size=24 \
+    data.train_files=data/geo/data_questioner_train/train.parquet \
+    data.val_files=data/geo/data_questioner_train/test.parquet \
+    data.train_batch_size=48 \
     data.max_prompt_length=1024 \
     data.max_response_length=2048 \
     data.filter_overlong_prompts=True \
@@ -52,7 +56,7 @@ CUDA_VISIBLE_DEVICES=1,2,3 python3 -m verl.trainer.main_ppo \
     custom_reward_function.name=compute_score \
     trainer.critic_warmup=0 \
     trainer.logger='["swanlab"]' \
-    trainer.project_name='geo3k_self_train' \
+    trainer.project_name='geo' \
     trainer.experiment_name=$experiment_name \
     trainer.n_gpus_per_node=3 \
     trainer.nnodes=1 \
@@ -60,10 +64,9 @@ CUDA_VISIBLE_DEVICES=1,2,3 python3 -m verl.trainer.main_ppo \
     trainer.test_freq=-1 \
     trainer.total_epochs=1
 
-# Training completed, merge model
 echo "Training completed. Merging model..."
 
-PROJECT_NAME='geo3k_self_train'
+PROJECT_NAME='geo'
 CHECKPOINT_DIR="checkpoints/${PROJECT_NAME}/${experiment_name}"
 
 LATEST_STEP=$(ls -1 $CHECKPOINT_DIR | grep "global_step_" | sort -V | tail -1)
@@ -71,13 +74,12 @@ LATEST_STEP=$(ls -1 $CHECKPOINT_DIR | grep "global_step_" | sort -V | tail -1)
 if [ -n "$LATEST_STEP" ]; then
     echo "Found latest checkpoint: $LATEST_STEP"
     
-    # Merge model using verl model_merger
     python3 -m verl.model_merger merge \
         --backend fsdp \
         --local_dir ${CHECKPOINT_DIR}/${LATEST_STEP}/actor \
         --target_dir ${CHECKPOINT_DIR}/${LATEST_STEP}/actor/huggingface
     
-    mkdir ../models/${experiment_name}
+    mkdir -p ../models/${experiment_name}
     cp -rL ${CHECKPOINT_DIR}/${LATEST_STEP}/actor/huggingface/* ../models/${experiment_name}
     echo "Model merged successfully: ${CHECKPOINT_DIR}/${LATEST_STEP}/actor/huggingface"
 else
@@ -86,5 +88,6 @@ fi
 
 echo "Shutting down solver services..."
 pkill -f "start_vllm_server.py"
+pkill -f "VLLM::EngineCor"
 sleep 2
 echo "Cleanup completed."
